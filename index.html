@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Logistics & Sales Dashboard</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    .map-container { height: 540px; width: 100%; border-radius: 0.75rem; }
+    .tab-active { border-bottom: 3px solid #2563eb; color: #2563eb; font-weight: 600; }
+    
+    /* Legend โทนสีร้อน (เหลือง-ส้ม-แดง) */
+    .info.legend {
+      background: rgba(255, 255, 255, 0.95);
+      padding: 10px 14px;
+      font-size: 13px;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+      line-height: 20px;
+      color: #333;
+    }
+    .info.legend i {
+      width: 20px;
+      height: 14px;
+      float: left;
+      margin-right: 8px;
+      opacity: 0.85;
+      border-radius: 2px;
+    }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen p-4 md:p-6 font-sans">
+  <div class="max-w-7xl mx-auto space-y-5">
+    
+    <!-- Top Header & Global Filter (ไม่มีตัวเลือก "ทั้งหมด") -->
+    <div class="bg-white p-5 rounded-xl shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-800">🚚 Logistics & Sales Dashboard</h1>
+        <p class="text-sm text-slate-500">วิเคราะห์พื้นที่จัดส่งและเปรียบเทียบระยะทางโกดัง (ใหม่ vs ปัจจุบัน)</p>
+      </div>
+      
+      <!-- Filter ช่องทางจัดส่ง -->
+      <div class="flex items-center gap-3 bg-slate-50 p-2 rounded-lg border border-slate-200">
+        <label for="channelFilter" class="text-sm font-semibold text-slate-700">ช่องทางจัดส่ง:</label>
+        <select id="channelFilter" onchange="onFilterChange()" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm bg-white font-medium text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-orange-500">
+          <option value="Shopee">Shopee</option>
+          <option value="ภายใน">จัดส่งภายใน</option>
+          <option value="BEST">BEST Express</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Summary KPI Cards (3 ช่องทางตามสั่ง) -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="bg-white p-4 rounded-xl shadow-sm border-l-4 border-orange-500">
+        <p class="text-xs font-semibold text-slate-400 uppercase">Shopee</p>
+        <p id="shopeeOrders" class="text-2xl font-bold text-slate-800 mt-1">0</p>
+      </div>
+      <div class="bg-white p-4 rounded-xl shadow-sm border-l-4 border-emerald-500">
+        <p class="text-xs font-semibold text-slate-400 uppercase">จัดส่งภายใน</p>
+        <p id="internalOrders" class="text-2xl font-bold text-slate-800 mt-1">0</p>
+      </div>
+      <div class="bg-white p-4 rounded-xl shadow-sm border-l-4 border-red-500">
+        <p class="text-xs font-semibold text-slate-400 uppercase">BEST Express</p>
+        <p id="bestOrders" class="text-2xl font-bold text-slate-800 mt-1">0</p>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs (2 แท็บหลัก) -->
+    <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+      <div class="flex border-b border-slate-200 text-sm font-medium text-slate-500">
+        <button id="btnTab1" onclick="switchTab(1)" class="flex-1 py-3 px-4 text-center tab-active transition-all">
+          1. ภาพรวมทั้งประเทศ (Province Area Heatmap)
+        </button>
+        <button id="btnTab3" onclick="switchTab(3)" class="flex-1 py-3 px-4 text-center hover:text-orange-600 transition-all">
+          2. เปรียบเทียบระยะทางโกดัง (Warehouse Comparison)
+        </button>
+      </div>
+
+      <!-- Tab Content Area -->
+      <div class="p-5">
+        
+        <!-- TAB 1: Country View (Province Area Heatmap) -->
+        <div id="tab1Content" class="space-y-4">
+          <div class="flex flex-wrap justify-between items-center gap-2">
+            <h2 class="text-lg font-bold text-slate-700">🗺️ แผนที่ระบายสีความหนาแน่นรายจังหวัด (โทนสีร้อน)</h2>
+            <div class="flex gap-4 text-xs font-semibold">
+              <span class="flex items-center gap-1 text-amber-700">🏭 โกดังใหม่ (นครปฐม)</span>
+              <span class="flex items-center gap-1 text-purple-700">🏭 โกดังปัจจุบัน (สมุทรปราการ)</span>
+            </div>
+          </div>
+          <div id="mapTab1" class="map-container"></div>
+        </div>
+
+        <!-- TAB 2 (New Layout): Warehouse Proximity Side-by-Side Comparison -->
+        <div id="tab3Content" class="space-y-6 hidden">
+          <!-- Top Filter Bar -->
+          <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
+            <div>
+              <h3 class="text-md font-bold text-slate-800">📊 วิเคราะห์และเปรียบเทียบพื้นที่บริการโกดัง (Side-by-Side)</h3>
+              <p class="text-xs text-slate-500">เลือกจังหวัดเพื่อเปรียบเทียบปริมาณลูกค้าและอำเภอที่ใกล้โกดังใหม่ vs โกดังปัจจุบัน</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <label for="tableProvinceFilter" class="text-sm font-semibold text-slate-700">เลือกจังหวัด:</label>
+              <select id="tableProvinceFilter" onchange="renderTab3()" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm bg-white font-medium text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-orange-500">
+                <option value="ALL">ทุกจังหวัด (ภาพรวมทั้งประเทศ)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Side-by-Side Comparison (2 ช่อง) -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            
+            <!-- LEFT BOX: โกดังใหม่ (นครปฐม) -->
+            <div class="bg-amber-50/50 p-5 rounded-2xl border border-amber-200 shadow-sm space-y-4">
+              <div class="flex justify-between items-center border-b border-amber-200 pb-3">
+                <div>
+                  <span class="bg-amber-500 text-white text-xs font-bold px-2.5 py-1 rounded-md">โกดังใหม่</span>
+                  <h3 class="text-lg font-bold text-amber-900 mt-1">🏭 อ.นครชัยศรี จ.นครปฐม</h3>
+                </div>
+                <div class="text-right">
+                  <p class="text-xs font-semibold text-amber-700">จำนวนออเดอร์ใกล้โกดังนี้</p>
+                  <p id="newWarehouseOrders" class="text-2xl font-black text-amber-800">0 รายการ</p>
+                </div>
+              </div>
+
+              <div>
+                <h4 class="text-sm font-bold text-amber-900 mb-2 flex items-center justify-between">
+                  <span>🏘️ อำเภอ/เขต ที่อยู่ใกล้โกดังใหม่มากกว่า</span>
+                  <span id="newWarehouseDistCount" class="text-xs bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full font-semibold">0 พื้นที่</span>
+                </h4>
+                <div class="bg-white rounded-xl border border-amber-100 overflow-hidden shadow-inner">
+                  <div class="max-h-[380px] overflow-y-auto">
+                    <table class="w-full text-sm text-left text-slate-600">
+                      <thead class="text-xs text-amber-900 uppercase bg-amber-100/70 sticky top-0">
+                        <tr>
+                          <th class="py-2.5 px-3">อำเภอ/เขต (จังหวัด)</th>
+                          <th class="py-2.5 px-3 text-right">ยอดจัดส่ง (รายการ)</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tableNewWarehouseDistricts"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- RIGHT BOX: โกดังปัจจุบัน (สมุทรปราการ) -->
+            <div class="bg-purple-50/50 p-5 rounded-2xl border border-purple-200 shadow-sm space-y-4">
+              <div class="flex justify-between items-center border-b border-purple-200 pb-3">
+                <div>
+                  <span class="bg-purple-600 text-white text-xs font-bold px-2.5 py-1 rounded-md">โกดังปัจจุบัน</span>
+                  <h3 class="text-lg font-bold text-purple-900 mt-1">🏭 โซนบางพลี จ.สมุทรปราการ</h3>
+                </div>
+                <div class="text-right">
+                  <p class="text-xs font-semibold text-purple-700">จำนวนออเดอร์ใกล้โกดังนี้</p>
+                  <p id="currentWarehouseOrders" class="text-2xl font-black text-purple-800">0 รายการ</p>
+                </div>
+              </div>
+
+              <div>
+                <h4 class="text-sm font-bold text-purple-900 mb-2 flex items-center justify-between">
+                  <span>🏘️ อำเภอ/เขต ที่อยู่ใกล้โกดังปัจจุบันมากกว่า</span>
+                  <span id="currentWarehouseDistCount" class="text-xs bg-purple-200 text-purple-800 px-2 py-0.5 rounded-full font-semibold">0 พื้นที่</span>
+                </h4>
+                <div class="bg-white rounded-xl border border-purple-100 overflow-hidden shadow-inner">
+                  <div class="max-h-[380px] overflow-y-auto">
+                    <table class="w-full text-sm text-left text-slate-600">
+                      <thead class="text-xs text-purple-900 uppercase bg-purple-100/70 sticky top-0">
+                        <tr>
+                          <th class="py-2.5 px-3">อำเภอ/เขต (จังหวัด)</th>
+                          <th class="py-2.5 px-3 text-right">ยอดจัดส่ง (รายการ)</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tableCurrentWarehouseDistricts"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const GAS_API_URL = "https://script.google.com/macros/s/AKfycbyDXzcBb-JA5DXheeKZv6tTsaGfaXzBf4PUU91hW8fXxCqobWwLqZaXxem4aVpXgRAE/exec"; 
+    const PROVINCE_GEOJSON_URL = "https://raw.githubusercontent.com/apisit/thailand.json/master/thailand.json";
+
+    let allData = [];
+    let provinceGeoJson = null;
+    let activeTab = 1;
+
+    // พิกัดโกดัง (1 = นครปฐม, 2 = สมุทรปราการ)
+    const newWarehouse = { name: "โกดังใหม่ (นครปฐม)", lat: 13.7535996, lng: 100.1860005 };
+    const currentWarehouse = { name: "โกดังปัจจุบัน (สมุทรปราการ)", lat: 13.6292558, lng: 100.6384514 };
+
+    const warehouses = [
+      { name: "🏭 โกดังใหม่ (นครปฐม)", lat: newWarehouse.lat, lng: newWarehouse.lng, color: "#d97706" },      
+      { name: "🏭 โกดังปัจจุบัน (สมุทรปราการ)", lat: currentWarehouse.lat, lng: currentWarehouse.lng, color: "#7c3aed" }    
+    ];
+
+    let map1;
+    let geojsonLayerTab1 = null;
+
+    // พิกัดศูนย์กลางแต่ละจังหวัดสำหรับใช้คำนวณระยะทางเทียบกับโกดัง
+    const provinceCoords = {
+      "กรุงเทพมหานคร": [13.7563, 100.5018], "นนทบุรี": [13.8591, 100.5217], "สมุทรปราการ": [13.5991, 100.5998],
+      "ปทุมธานี": [14.0208, 100.5250], "ชลบุรี": [13.3611, 100.9847], "พระนครศรีอยุธยา": [14.3532, 100.5684],
+      "เชียงใหม่": [18.7883, 98.9853], "ขอนแก่น": [16.4419, 102.8360], "นครราชสีมา": [14.9799, 102.0978],
+      "สงขลา": [7.1988, 100.5951], "ภูเก็ต": [7.8804, 98.3923], "สุราษฎร์ธานี": [9.1382, 99.3217],
+      "พิษณุโลก": [16.8211, 100.2659], "อุบลราชธานี": [15.2287, 104.8594], "อุดรธานี": [17.4138, 102.7872],
+      "เชียงราย": [19.9072, 99.8325], "ลำปาง": [18.2888, 99.4920], "ระยอง": [12.6814, 101.2816],
+      "ฉะเชิงเทรา": [13.6904, 101.0779], "นครปฐม": [13.8196, 100.0622], "สมุทรสาคร": [13.5475, 100.2744],
+      "สระบุรี": [14.5289, 100.9108], "ลพบุรี": [14.7995, 100.6534], "ราชบุรี": [13.5373, 99.8164],
+      "กาญจนบุรี": [14.0227, 99.5328], "เพชรบุรี": [13.1111, 99.9397], "ประจวบคีรีขันธ์": [11.8124, 99.7973],
+      "จันทบุรี": [12.6114, 102.1039], "ตราด": [12.2428, 102.5165], "ปราจีนบุรี": [14.0509, 101.3730],
+      "สระแก้ว": [13.8141, 102.0708], "นครนายก": [14.2069, 101.2131], "สุพรรณบุรี": [14.4745, 100.1177],
+      "ชัยนาท": [15.1852, 100.1252], "สิงห์บุรี": [14.8860, 100.3986], "อ่างทอง": [14.5896, 100.4550],
+      "สมุทรสงคราม": [13.4098, 100.0023], "กำแพงเพชร": [16.4828, 99.5227], "ตาก": [16.8839, 99.1258],
+      "น่าน": [18.7838, 100.7782], "พะเยา": [19.1662, 99.9018], "พิจิตร": [16.4419, 100.3487],
+      "เพชรบูรณ์": [16.4190, 101.1561], "แพร่": [18.1446, 100.1403], "แม่ฮ่องสอน": [19.3021, 97.9654],
+      "สุโขทัย": [17.0056, 99.8264], "อุตรดิตถ์": [17.6201, 100.0993], "อุทัยธานี": [15.3832, 100.0247],
+      "กาฬสินธุ์": [16.4322, 103.5061], "ชัยภูมิ": [15.8068, 102.0315], "นครพนม": [17.3992, 104.7694],
+      "บึงกาฬ": [18.3612, 103.6531], "บุรีรัมย์": [14.9930, 103.1029], "มหาสารคาม": [16.1851, 103.3007],
+      "มุกดาหาร": [16.5441, 104.7237], "ยโสธร": [15.7924, 104.1453], "ร้อยเอ็ด": [16.0538, 103.6520],
+      "เลย": [17.4860, 101.7223], "ศรีสะเกษ": [15.1186, 104.3220], "สกลนคร": [17.1664, 104.1486],
+      "สุรินทร์": [14.8829, 103.4936], "หนองคาย": [17.8783, 102.7413], "หนองบัวลำภู": [17.2038, 102.4403],
+      "อำนาจเจริญ": [15.8582, 104.6258], "กระบี่": [8.0863, 98.9063], "ชุมพร": [10.4930, 99.1800],
+      "ตรัง": [7.5563, 99.6114], "นครศรีธรรมราช": [8.4304, 99.9631], "นราธิวาส": [6.4255, 101.8253],
+      "ปัตตานี": [6.8663, 101.2502], "พังงา": [8.4501, 98.5255], "พัทลุง": [7.6167, 100.0740],
+      "ยะลา": [6.5411, 101.2804], "ระนอง": [9.9658, 98.6348], "สตูล": [6.6238, 100.0674]
+    };
+
+    // พิกัดจำเพาะของเขตในกรุงเทพมหานคร สำหรับคำนวณระยะทางแม่นยำ
+    const bangkokDistrictCoords = {
+      "บางนา": [13.6681, 100.6067], "ประเวศ": [13.7121, 100.6803], "จตุจักร": [13.8284, 100.5630],
+      "บางแค": [13.6974, 100.4128], "สายไหม": [13.8943, 100.6558], "คลองสามวา": [13.8732, 100.7135],
+      "บางเขน": [13.8735, 100.5962], "ลาดพร้าว": [13.8055, 100.6083], "บางกะปิ": [13.7656, 100.6483],
+      "บางขุนเทียน": [13.6262, 100.4372], "สะพานสูง": [13.7712, 100.6811], "วัฒนา": [13.7431, 100.5843],
+      "คลองเตย": [13.7159, 100.5604], "ห้วยขวาง": [13.7770, 100.5739], "ดินแดง": [13.7765, 100.5583],
+      "พญาไท": [13.7785, 100.5428], "ราชเทวี": [13.7577, 100.5358], "ปทุมวัน": [13.7440, 100.5317],
+      "บางรัก": [13.7290, 100.5230], "สาทร": [13.7190, 100.5340], "พระนคร": [13.7649, 100.4990],
+      "ป้อมปราบศัตรูพ่าย": [13.7550, 100.5120], "สัมพันธวงศ์": [13.7380, 100.5120], "ธนบุรี": [13.7210, 100.4900],
+      "คลองสาน": [13.7250, 100.5080], "บางกอกใหญ่": [13.7290, 100.4780], "บางกอกน้อย": [13.7610, 100.4790],
+      "ตลิ่งชัน": [13.7780, 100.4430], "ทวีวัฒนา": [13.7780, 100.3780], "ภาษีเจริญ": [13.7210, 100.4440],
+      "หนองแขม": [13.7040, 100.3540], "บางบอน": [13.6590, 100.4130], "จอมทอง": [13.6880, 100.4690],
+      "ราษฎร์บูรณะ": [13.6820, 100.5050], "ทุ่งครุ": [13.6390, 100.5010], "บางซื่อ": [13.8030, 100.5290],
+      "ดุสิต": [13.7770, 100.5130], "หลักสี่": [13.8860, 100.5750], "ดอนเมือง": [13.9130, 100.5930],
+      "มีนบุรี": [13.8110, 100.7450], "ลาดกระบัง": [13.7220, 100.7810], "หนองจอก": [13.8540, 100.8570],
+      "บึงกุ่ม": [13.7910, 100.6620], "คันนายาว": [13.8340, 100.6750], "สวนหลวง": [13.7290, 100.6350]
+    };
+
+    // Dictionary แปลงชื่อจังหวัดภาษาอังกฤษเป็นไทยครบถ้วน
+    const enToThProvinces = {
+      "bangkok": "กรุงเทพมหานคร", "bangkok metropolis": "กรุงเทพมหานคร", "krung thep maha nakhon": "กรุงเทพมหานคร",
+      "samut prakan": "สมุทรปราการ", "nonthaburi": "นนทบุรี", "pathum thani": "ปทุมธานี",
+      "phra nakhon si ayutthaya": "พระนครศรีอยุธยา", "ayutthaya": "พระนครศรีอยุธยา", "ang thong": "อ่างทอง",
+      "lop buri": "ลพบุรี", "lopburi": "ลพบุรี", "sing buri": "สิงห์บุรี", "singburi": "สิงห์บุรี",
+      "chai nat": "ชัยนาท", "chainat": "ชัยนาท", "saraburi": "สระบุรี", "chon buri": "ชลบุรี", "chonburi": "ชลบุรี",
+      "rayong": "ระยอง", "chanthaburi": "จันทบุรี", "trat": "ตราด", "chachoengsao": "ฉะเชิงเทรา",
+      "prachin buri": "ปราจีนบุรี", "prachinburi": "ปราจีนบุรี", "sa kaeo": "สระแก้ว", "sakaeo": "สระแก้ว", "nakhon nayok": "นครนายก",
+      "nakhon pathom": "นครปฐม", "suphan buri": "สุพรรณบุรี", "suphanburi": "สุพรรณบุรี",
+      "ratchaburi": "ราชบุรี", "kanchanaburi": "กาญจนบุรี", "phetchaburi": "เพชรบุรี",
+      "prachuap khiri khan": "ประจวบคีรีขันธ์", "nakhon si thammarat": "นครศรีธรรมราช", "krabi": "กระบี่",
+      "phang nga": "พังงา", "phangnga": "พังงา", "phuket": "ภูเก็ต", "surat thani": "สุราษฎร์ธานี", "ranong": "ระนอง",
+      "chumphon": "ชุมพร", "songkhla": "สงขลา", "satun": "สตูล", "trang": "ตรัง",
+      "phatthalung": "พัทลุง", "pattani": "ปัตตานี", "yala": "ยะลา", "narathiwat": "นราธิวาส",
+      "chiang mai": "เชียงใหม่", "lamphun": "ลำพูน", "lampang": "ลำปาง", "uttaradit": "อุตรดิตถ์",
+      "phrae": "แพร่", "nan": "น่าน", "phayao": "พะเยา", "chiang rai": "เชียงราย",
+      "mae hong son": "แม่ฮ่องสอน", "nakhon sawan": "นครสวรรค์", "uthai thani": "อุทัยธานี",
+      "kamphaeng phet": "กำแพงเพชร", "tak": "ตาก", "sukhothai": "สุโขทัย", "phitsanulok": "พิษณุโลก",
+      "phichit": "พิจิตร", "phetchabun": "เพชรบูรณ์", "khon kaen": "ขอนแก่น", "udon thani": "อุดรธานี",
+      "loei": "เลย", "nong khai": "หนองคาย", "maha sarakham": "มหาสารคาม", "roi et": "ร้อยเอ็ด",
+      "kalasin": "กาฬสินธุ์", "sakon nakhon": "สกลนคร", "nakhon phanom": "นครพนม", "mukdahan": "มุกดาหาร",
+      "ubon ratchathani": "อุบลราชธานี", "yasothon": "ยโสธร", "chaiyaphum": "ชัยภูมิ",
+      "amnat charoen": "อำนาจเจริญ", "bueng kan": "บึงกาฬ", "nong bua lamphu": "หนองบัวลำภู", "nong bua lam phu": "หนองบัวลำภู",
+      "buri ram": "บุรีรัมย์", "buriram": "บุรีรัมย์", "surin": "สุรินทร์", "si sa ket": "ศรีสะเกษ", "sisaket": "ศรีสะเกษ", "nakhon ratchasima": "นครราชสีมา",
+      "samut sakhon": "สมุทรสาคร", "samut songkhram": "สมุทรสงคราม"
+    };
+
+    function cleanProvinceName(str) {
+      if (!str) return "";
+      let cleaned = str.toString().replace(/จังหวัด/g, "").trim();
+      let lower = cleaned.toLowerCase();
+      if (enToThProvinces[lower]) {
+        return enToThProvinces[lower];
+      }
+      return cleaned;
+    }
+
+    function cleanDistrictName(str) {
+      if (!str) return "";
+      return str.toString().replace(/อำเภอ|เขต|กิ่งอำเภอ/g, "").trim();
+    }
+
+    // คำนวณระยะทางระหว่างพิกัด 2 จุด (Haversine Formula) เป็นกิโลเมตร
+    function calculateDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371; 
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon/2) * Math.sin(dLon/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c;
+    }
+
+    function getCloserWarehouse(lat, lng) {
+      const distNew = calculateDistance(lat, lng, newWarehouse.lat, newWarehouse.lng);
+      const distCurrent = calculateDistance(lat, lng, currentWarehouse.lat, currentWarehouse.lng);
+      return distNew <= distCurrent ? "NEW" : "CURRENT";
+    }
+
+    // โทนสีร้อนแรง (เหลือง -> ส้ม -> แดง)
+    function getProvinceColor(d) {
+      return d > 500 ? '#7f1d1d' :
+             d > 200 ? '#dc2626' :
+             d > 50  ? '#ea580c' :
+             d > 10  ? '#f97316' :
+             d > 0   ? '#facc15' :
+                       '#fef9c3';
+    }
+
+    function initMaps() {
+      map1 = L.map('mapTab1', { minZoom: 6, maxZoom: 11 }).setView([13.7367, 100.5231], 6);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' }).addTo(map1);
+
+      addLegend(map1, getProvinceColor, [0, 10, 50, 200, 500], 'ยอดจัดส่งจังหวัด');
+    }
+
+    function addLegend(targetMap, colorFn, grades, titleText) {
+      const legend = L.control({position: 'bottomright'});
+      legend.onAdd = function () {
+        const div = L.DomUtil.create('div', 'info legend');
+        div.innerHTML = `<strong>${titleText} (รายการ)</strong><br>`;
+        for (let i = 0; i < grades.length; i++) {
+          div.innerHTML +=
+            '<i style="background:' + colorFn(grades[i] + 1) + '"></i> ' +
+            grades[i] + (grades[i + 1] ? '&ndash;' + grades[i + 1] + '<br>' : '+');
+        }
+        return div;
+      };
+      legend.addTo(targetMap);
+    }
+
+    function drawWarehouses(targetMap) {
+      warehouses.forEach(wh => {
+        const warehouseMarker = L.circleMarker([wh.lat, wh.lng], {
+          radius: 12,
+          fillColor: wh.color,
+          color: "#ffffff",
+          weight: 3,
+          fillOpacity: 1
+        });
+        warehouseMarker.bindPopup(`<strong style="font-size: 14px;">${wh.name}</strong><br/><span style="color:#666;">พิกัด: ${wh.lat}, ${wh.lng}</span>`);
+        warehouseMarker.addTo(targetMap);
+      });
+    }
+
+    async function fetchData() {
+      try {
+        const [resData, resProvGeo] = await Promise.all([
+          fetch(GAS_API_URL),
+          fetch(PROVINCE_GEOJSON_URL)
+        ]);
+        
+        allData = await resData.json();
+        provinceGeoJson = await resProvGeo.json();
+        
+        populateProvinceDropdowns();
+        updateDashboard();
+      } catch (err) {
+        console.error("Error fetching data:", err);
+      }
+    }
+
+    function getFilteredData() {
+      const channel = document.getElementById('channelFilter').value;
+      return allData.filter(item => item.channel && item.channel.toLowerCase().includes(channel.toLowerCase()));
+    }
+
+    function updateDashboard() {
+      const filtered = getFilteredData();
+      
+      document.getElementById('shopeeOrders').innerText = filtered.filter(i => i.channel && i.channel.toLowerCase().includes('shopee')).length.toLocaleString();
+      document.getElementById('internalOrders').innerText = filtered.filter(i => i.channel && i.channel.toLowerCase().includes('ภายใน')).length.toLocaleString();
+      document.getElementById('bestOrders').innerText = filtered.filter(i => i.channel && i.channel.toLowerCase().includes('best')).length.toLocaleString();
+
+      if (activeTab === 1) renderTab1(filtered);
+      if (activeTab === 3) renderTab3();
+    }
+
+    // TAB 1: Province Area Heatmap
+    function renderTab1(data) {
+      if (geojsonLayerTab1) map1.removeLayer(geojsonLayerTab1);
+
+      const provCounts = {};
+      data.forEach(item => {
+        const prov = cleanProvinceName(item.province);
+        if (prov) provCounts[prov] = (provCounts[prov] || 0) + 1;
+      });
+
+      if (provinceGeoJson) {
+        geojsonLayerTab1 = L.geoJson(provinceGeoJson, {
+          style: function(feature) {
+            const props = feature.properties;
+            const rawName = props.name || props.NAME_1 || props.name_th || props.changwat || props.PROV_NAMT || "";
+            const provName = cleanProvinceName(rawName);
+            const count = provCounts[provName] || 0;
+            
+            return {
+              fillColor: getProvinceColor(count),
+              weight: 1,
+              opacity: 1,
+              color: '#ffffff',
+              fillOpacity: 0.8
+            };
+          },
+          onEachFeature: function(feature, layer) {
+            const props = feature.properties;
+            const rawName = props.name || props.NAME_1 || props.name_th || props.changwat || props.PROV_NAMT || "";
+            const provName = cleanProvinceName(rawName);
+            const count = provCounts[provName] || 0;
+            
+            layer.bindPopup(`
+              <div class="text-center font-sans">
+                <strong class="text-slate-800 text-sm">จังหวัด${provName}</strong><br/>
+                <span class="text-orange-600 font-bold text-md">${count.toLocaleString()} รายการ</span>
+              </div>
+            `);
+            
+            layer.on({
+              mouseover: (e) => { e.target.setStyle({ weight: 2.5, color: '#c2410c', fillOpacity: 0.95 }); },
+              mouseout: (e) => { geojsonLayerTab1.resetStyle(e.target); }
+            });
+          }
+        }).addTo(map1);
+      }
+
+      drawWarehouses(map1);
+      setTimeout(() => map1.invalidateSize(), 200);
+    }
+
+    function populateProvinceDropdowns() {
+      const provSet = new Set();
+      allData.forEach(item => {
+        const p = cleanProvinceName(item.province);
+        if (p) provSet.add(p);
+      });
+
+      const sortedProvs = Array.from(provSet).sort();
+
+      const select3 = document.getElementById('tableProvinceFilter');
+      select3.innerHTML = `<option value="ALL">ทุกจังหวัด (ภาพรวมทั้งประเทศ)</option>`;
+      sortedProvs.forEach(prov => {
+        const opt = document.createElement('option');
+        opt.value = prov;
+        opt.innerText = prov;
+        select3.appendChild(opt);
+      });
+    }
+
+    // TAB 3: Warehouse Proximity Side-by-Side Comparison
+    function renderTab3() {
+      const data = getFilteredData();
+      const selectedProvFilter = document.getElementById('tableProvinceFilter').value;
+
+      let newWhTotalOrders = 0;
+      let currentWhTotalOrders = 0;
+
+      const newWhDistMap = {};
+      const currentWhDistMap = {};
+
+      data.forEach(item => {
+        const prov = cleanProvinceName(item.province);
+        const dist = cleanDistrictName(item.district);
+
+        // กรองตามจังหวัดถ้าผู้ใช้เลือก
+        if (selectedProvFilter !== 'ALL' && prov !== selectedProvFilter) return;
+
+        // หาพิกัดเพื่อเช็คระยะทาง
+        let lat = null, lng = null;
+        if (prov === "กรุงเทพมหานคร" && bangkokDistrictCoords[dist]) {
+          lat = bangkokDistrictCoords[dist][0];
+          lng = bangkokDistrictCoords[dist][1];
+        } else if (provinceCoords[prov]) {
+          lat = provinceCoords[prov][0];
+          lng = provinceCoords[prov][1];
+        }
+
+        let closer = "CURRENT";
+        if (lat && lng) {
+          closer = getCloserWarehouse(lat, lng);
+        }
+
+        const distKey = dist ? `${dist} (${prov})` : prov;
+
+        if (closer === "NEW") {
+          newWhTotalOrders++;
+          newWhDistMap[distKey] = (newWhDistMap[distKey] || 0) + 1;
+        } else {
+          currentWhTotalOrders++;
+          currentWhDistMap[distKey] = (currentWhDistMap[distKey] || 0) + 1;
+        }
+      });
+
+      // อัปเดตตัวเลขรวมฝั่งซ้าย-ขวา
+      document.getElementById('newWarehouseOrders').innerText = `${newWhTotalOrders.toLocaleString()} รายการ`;
+      document.getElementById('currentWarehouseOrders').innerText = `${currentWhTotalOrders.toLocaleString()} รายการ`;
+
+      // อัปเดตตารางฝั่งซ้าย (โกดังใหม่)
+      const sortedNewDists = Object.entries(newWhDistMap).sort((a,b) => b[1] - a[1]);
+      document.getElementById('newWarehouseDistCount').innerText = `${sortedNewDists.length} พื้นที่`;
+      
+      let newTableHtml = "";
+      sortedNewDists.forEach(([distKey, count]) => {
+        newTableHtml += `
+          <tr class="bg-white border-b border-amber-100 hover:bg-amber-50/50">
+            <td class="py-2.5 px-3 font-medium text-slate-800">🏘️ ${distKey}</td>
+            <td class="py-2.5 px-3 text-right font-bold text-amber-800">${count.toLocaleString()}</td>
+          </tr>
+        `;
+      });
+      document.getElementById('tableNewWarehouseDistricts').innerHTML = newTableHtml || "<tr><td colspan='2' class='p-4 text-center text-slate-400'>ไม่มีออเดอร์ใกล้โกดังนี้ในจังหวัดที่เลือก</td></tr>";
+
+      // อัปเดตตารางฝั่งขวา (โกดังปัจจุบัน)
+      const sortedCurrentDists = Object.entries(currentWhDistMap).sort((a,b) => b[1] - a[1]);
+      document.getElementById('currentWarehouseDistCount').innerText = `${sortedCurrentDists.length} พื้นที่`;
+
+      let currentTableHtml = "";
+      sortedCurrentDists.forEach(([distKey, count]) => {
+        currentTableHtml += `
+          <tr class="bg-white border-b border-purple-100 hover:bg-purple-50/50">
+            <td class="py-2.5 px-3 font-medium text-slate-800">🏘️ ${distKey}</td>
+            <td class="py-2.5 px-3 text-right font-bold text-purple-800">${count.toLocaleString()}</td>
+          </tr>
+        `;
+      });
+      document.getElementById('tableCurrentWarehouseDistricts').innerHTML = currentTableHtml || "<tr><td colspan='2' class='p-4 text-center text-slate-400'>ไม่มีออเดอร์ใกล้โกดังนี้ในจังหวัดที่เลือก</td></tr>";
+    }
+
+    function switchTab(tabNum) {
+      activeTab = tabNum;
+      
+      [1, 3].forEach(n => {
+        document.getElementById(`tab${n}Content`).classList.add('hidden');
+        document.getElementById(`btnTab${n}`).classList.remove('tab-active');
+        document.getElementById(`btnTab${n}`).classList.add('hover:text-orange-600');
+      });
+
+      document.getElementById(`tab${tabNum}Content`).classList.remove('hidden');
+      document.getElementById(`btnTab${tabNum}`).classList.add('tab-active');
+
+      updateDashboard();
+    }
+
+    function onFilterChange() {
+      updateDashboard();
+    }
+
+    window.onload = () => {
+      initMaps();
+      fetchData();
+    };
+  </script>
+</body>
+</html>
